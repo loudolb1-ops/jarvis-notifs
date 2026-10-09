@@ -43,7 +43,10 @@ jobs:
             echo "notif à $(TZ=Europe/Paris date -d @$target +%H:%M), dans $wait s"
             if [ $wait -gt 0 ]; then sleep $wait; fi
           fi
-          curl -fsS -X POST "$PUSH_URL" -H "X-Push-Key: $PUSH_KEY" -H "Content-Type: application/json" -d '{"action":"send"}'
+          # QStash (Upstash, « jarvis-reveil ») envoie déjà à l'heure pile depuis le 9 oct. : JARVIS n'envoie qu'une fois
+          # par créneau, ce dépôt n'est plus qu'un secours (un test « now » force l'envoi)
+          body='{"action":"send"}'; [ "$NOW" = "true" ] && body='{"action":"send","force":true}'
+          curl -fsS -X POST "$PUSH_URL" -H "X-Push-Key: $PUSH_KEY" -H "Content-Type: application/json" -d "$body"
           echo
       - name: rester actif (GitHub coupe les tâches planifiées d'un dépôt public sans activité depuis 60 jours)
         env:
