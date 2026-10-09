@@ -1,0 +1,55 @@
+name: va-poster
+# JARVIS : notif « va poster !! » sur le téléphone de Lou à 12:00, 17:00 et 20:00 (heure de Paris).
+# GitHub ne connaît que l'UTC et lance souvent les tâches en retard : chaque heure a deux déclenchements
+# (été UTC+2 / hiver UTC+1), ~35 min en avance ; le bon attend la minute pile, l'autre s'arrête tout de suite.
+# L'envoi lui-même = JARVIS (deploy/api/push.js sur Vercel) ; ce dépôt ne fait que l'appeler à l'heure.
+on:
+  schedule:
+    - cron: "25 9,10 * * *"    # 12:00 Paris
+    - cron: "25 14,15 * * *"   # 17:00 Paris
+    - cron: "25 17,18 * * *"   # 20:00 Paris
+  workflow_dispatch:
+    inputs:
+      now:
+        description: "envoyer tout de suite (test)"
+        type: boolean
+        default: false
+permissions:
+  contents: write
+concurrency:
+  group: va-poster
+  cancel-in-progress: false
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: attendre l'heure pile, puis notifier
+        env:
+          PUSH_URL: ${{ secrets.PUSH_URL }}
+          PUSH_KEY: ${{ secrets.PUSH_KEY }}
+          NOW: ${{ inputs.now }}
+        run: |
+          if [ "$NOW" != "true" ]; then
+            target=""
+            for hm in 12:00 17:00 20:00; do
+              t=$(TZ=Europe/Paris date -d "today $hm" +%s)
+              d=$(( t - $(date +%s) ))
+              # bon déclenchement : ~35 min avant (jusqu'à ~55 min de retard toléré) ; celui de l'autre saison : 25 min après
+              if [ $d -gt -1200 ] && [ $d -le 3600 ]; then target=$t; fi
+            done
+            if [ -z "$target" ]; then echo "pas l'heure (déclenchement de l'autre saison)"; exit 0; fi
+            wait=$(( target - $(date +%s) ))
+            echo "notif à $(TZ=Europe/Paris date -d @$target +%H:%M), dans $wait s"
+            if [ $wait -gt 0 ]; then sleep $wait; fi
+          fi
+          curl -fsS -X POST "$PUSH_URL" -H "X-Push-Key: $PUSH_KEY" -H "Content-Type: application/json" -d '{"action":"send"}'
+          echo
+      - name: rester actif (GitHub coupe les tâches planifiées d'un dépôt public sans activité depuis 60 jours)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "$(TZ=Europe/Paris date +%d-%H)" in 01-12|15-12) ;; *) exit 0;; esac
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/contents/vivant.txt" --jq .sha 2>/dev/null || true)
+          gh api -X PUT "repos/$GITHUB_REPOSITORY/contents/vivant.txt" -f message="vivant $(date -u +%F)" \
+            -f content="$(date -u +%F | base64)" ${sha:+-f sha=$sha} --silent
